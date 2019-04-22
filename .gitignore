@@ -1,0 +1,12 @@
+.idea/
+venv/
+*.pyc
+
+output/
+dimacs/
+dot/
+
+plantri.exe
+plantri.txt
+be.exe
+lingeling.exe
