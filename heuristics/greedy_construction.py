@@ -2,9 +2,9 @@ import random
 import sys
 from collections import defaultdict
 
-from models import MixedLinearLayout, StackLinearLayout, LinearLayout, Queue
+from models import MixedLinearLayout, StackLinearLayout, LinearLayout
 
-from utils import Tree
+from utils import Tree, Queue
 
 
 #

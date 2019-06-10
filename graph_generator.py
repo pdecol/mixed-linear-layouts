@@ -1,9 +1,12 @@
 import random
 from collections import defaultdict
+from copy import copy
+
 import numpy as np
 
 from io_parser import DotParser, PickleParser
 from models import Graph, StackLinearLayout
+from utils import is_graph_connected, triangles_of_graph
 
 
 def generate_maximal_bipartite_graph(num_vertices_1, num_vertices_2):
@@ -17,7 +20,7 @@ def generate_maximal_bipartite_graph(num_vertices_1, num_vertices_2):
     return graph
 
 
-def generate_planer_bipartite_graph(num_vertices, edge_density=0.5,
+def generate_planar_bipartite_graph(num_vertices, edge_density=1,
                                     max_degree=None):
     graph = Graph()
     stack1 = []
@@ -74,8 +77,8 @@ def generate_random_graph(num_vertices, num_edges):
     for i in range(1, num_vertices + 1):
         graph.add_vertex(i)
 
-    #max_edges = (num_vertices * (num_vertices - 1)) // 2
-    while len(graph.edges) < num_edges:
+    max_edges = (num_vertices * (num_vertices - 1)) // 2
+    while len(graph.edges) < min(num_edges, max_edges):
         v1 = random.choice(range(1, num_vertices + 1))
         v2 = random.choice(range(1, num_vertices + 1))
 
@@ -134,7 +137,7 @@ def generate_complete_graph(num_vertices):
     return graph
 
 
-def generate_planar_graph(num_vertices):
+def generate_planar_graph(num_vertices, target_triangles=None):
     # Create a random set of points
     points = np.random.random((num_vertices, 2))
 
@@ -150,6 +153,10 @@ def generate_planar_graph(num_vertices):
         graph.add_edge(v1, v2)
         graph.add_edge(v1, v3)
         graph.add_edge(v2, v3)
+
+    if target_triangles is not None:
+        while triangles_of_graph(graph) > target_triangles:
+            reduce_edges(graph, 99.999)  # remove a single edge
 
     return graph
 
@@ -373,3 +380,35 @@ class Delaunay2d:
             regions[i-4] = r        # Store region.
 
         return vor_coors, regions
+
+
+class GraphNotConnectedException(Exception):
+    pass
+
+
+def reduce_edges(graph, target_density):
+    """
+    :param graph: A instance of Graph
+    :param target_density: A number between 0 and 100
+    :return: The graph that has only percentage amount of edges left but is
+        still connected.
+    :raises: GraphNotConnectedException if it is not possible to remove so many
+        edges.
+    """
+
+    target_edges = len(graph.edges) * (target_density / 100)
+    while len(graph.edges) > target_edges:
+        edges = copy(graph.edges)
+        random.shuffle(edges)
+        edge_removed = False
+        for v1, v2 in graph.get_edges():
+            graph.remove_edge(v1, v2)
+            if is_graph_connected(graph):
+                edge_removed = True
+                break
+            else:
+                graph.add_edge(v1, v2)
+        if not edge_removed:
+            raise GraphNotConnectedException()
+
+    return graph

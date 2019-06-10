@@ -5,30 +5,38 @@ import os
 import random
 import statistics
 import sys
+
+from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
 from subprocess import run, PIPE
 from threading import Thread
 
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 
 from bipartite import LayeredGraph
-from graph_generator import generate_planer_bipartite_graph, \
+from graph_generator import generate_planar_bipartite_graph, \
     generate_random_graph, generate_k_tree, generate_complete_graph, \
-    generate_planar_graph, generate_maximal_bipartite_graph
+    generate_planar_graph, generate_maximal_bipartite_graph, reduce_edges, \
+    GraphNotConnectedException
 from heuristics.greedy_construction import full_combined_heuristic, \
     data_structure, con_greedy_plus_vertex_order, smallest_degree_dfs, \
-    random_dfs, ceil_floor, con_greedy
+    random_dfs, ceil_floor, con_greedy, random_bfs, edge_length
 from heuristics.heuristics import CONSTRUCTION_HEURISTICS, \
     test_construction_heuristics, OPTIMIZATION_HEURISTICS, \
-    test_optimization_heuristics
+    test_optimization_heuristics, page_assignment_heuristics
 from io_parser import DotParser, PickleParser, ASCIIParser, GraphML
 from models import MixedLinearLayout, StackLinearLayout, Graph, LinearLayout
+from observations.observations import observation_1, observation_2, \
+    observation_3
+from utils import triangles_of_graph
 from view import show_linear_layouts, show_circular_layout, show_layered_graph
 
 
-# HEURISTIC_RESULTS_DIRECTORY = ''
+HEURISTIC_RESULTS_DIRECTORY = 'D:\\TUWien\\Diplomarbeit\\Latex\\R'
 
 be = 'be'
 lingeling = 'lingeling'
@@ -163,7 +171,7 @@ if __name__ == '__main__':
 
             start_time = datetime.datetime.now()
             if graph_class == 'bipartite':
-                graph, sll = generate_planer_bipartite_graph(vertices, density, max_degree)
+                graph, sll = generate_planar_bipartite_graph(vertices, density, max_degree)
                 layouts.append(sll)
             elif graph_class == 'random':
                 graph = generate_random_graph(vertices, density)
@@ -213,25 +221,31 @@ if __name__ == '__main__':
             mll.queue = layout.queues[0]
 
         elif arg.startswith('h-construction-'):
-            type = arg.split('-')[2]
-            runs = int(arg.split('-')[3])
-            graph_class = arg.split('-')[4]
-            graph_arg_1 = int(arg.split('-')[5])
-            if len(arg.split('-')) > 6 and arg.split('-')[6]:
-                graph_arg_2 = int(arg.split('-')[6])
+            # type = arg.split('-')[2]
+            # runs = int(arg.split('-')[3])
+            # graph_class = arg.split('-')[4]
+            # graph_arg_1 = int(arg.split('-')[5])
+            # if len(arg.split('-')) > 6 and arg.split('-')[6]:
+            #     graph_arg_2 = int(arg.split('-')[6])
+            type = 'single'
+            runs = 1  # 500
+            graph_class = arg.split('-')[2]
+            #graph_arg_1 = int(arg.split('-')[3])
+            if len(arg.split('-')) > 3 and arg.split('-')[3]:
+                graph_arg_2 = int(arg.split('-')[3])
 
             graph_generator_kwargs = {
-                'num_vertices': graph_arg_1,
+                #'num_vertices': graph_arg_1,
             }
 
             if graph_class == 'planar':
                 graph_generator = generate_planar_graph
             elif graph_class == 'planar_bipartite':
-                graph_generator = generate_planer_bipartite_graph
+                graph_generator = generate_planar_bipartite_graph
                 graph_generator_kwargs['edge_density'] = 1
             elif graph_class == 'random':
                 graph_generator = generate_random_graph
-                graph_generator_kwargs['num_edges'] = graph_arg_1 * graph_arg_2
+                graph_generator_kwargs['num_edges'] = graph_arg_2
             elif graph_class == 'k_tree':
                 graph_generator = generate_k_tree
                 graph_generator_kwargs['k'] = graph_arg_2
@@ -270,67 +284,34 @@ if __name__ == '__main__':
                 'ceil_floor': 'ceilFloor',
                 'data_structure': 'dataStructure',
             }
+            print('graph_class,vertices,edges,heuristic,conflicts,conflicts_per_edge')
             if type == 'single':
-                # Run 5 tests for 20, 40, 50, 80 and 100 vertices
-                x_best = 8
-                best = []
-                data = ['HEURISTIC;NAME;VO_ID;PA_ID;VERTICES;CONFLICTS;']
-                results = []
-                for i in range(5, 0, -1):
-                    graph_generator_kwargs['num_vertices'] = i * 20
-                    if 'num_edges' in graph_generator_kwargs:
-                        graph_generator_kwargs['num_edges'] = i * 20 * graph_arg_2
-                    results, all_data = test_construction_heuristics(runs, heuristics, graph_generator, graph_generator_kwargs)
-                    if not best:
-                        best = [name for name, conflicts in results[:x_best]]
-                    for name, conflicts in results:
-                        if name not in best:
-                            continue
-                        name_1 = name.split(' ')[0]
-                        name_2 = name.split(' ')[1] if ' ' in name else ''
-                        data.append(';'.join(
-                            [str(best.index(name) + 1),
-                             heuristic_names[name_1] + ' & ' + heuristic_names[name_2] if name_2 else heuristic_names[name_1],
-                             heuristic_name_ids[name_1],
-                             heuristic_name_ids[name_2 if name_2 else name_1],
-                             str(graph_generator_kwargs['num_vertices']),
-                             str(conflicts) + ';']))
+                for i in range(2, 11):  # 21
+                    num_vertices = i * 5
+                    for run in range(runs):
+                        graph_generator_kwargs['num_vertices'] = num_vertices
+                        if 'num_edges' in graph_generator_kwargs:
+                            graph_generator_kwargs['num_edges'] = num_vertices * graph_arg_2
 
-                    if i == 5:  # boxplot diagram for the biggest size of the graph
-                        box_plot_data = ['HEURISTIC;CONFLICTS', ]
-                        for d in all_data:
-                            if d[0] not in [x[0] for x in results[:3]]:
-                                # get the name of the 3 best heuristics and continue if its not one of them
-                                continue
-                            name_1 = d[0].split(' ')[0]
-                            name_2 = d[0].split(' ')[1] if ' ' in d[0] else ''
-                            box_plot_data.append(';'.join([
-                                heuristic_names[name_1] + ' & ' +
-                                heuristic_names[name_2] if name_2 else
-                                heuristic_names[name_1],
-                                str(d[1]),
-                            ]))
-                        #file_path = os.path.join(HEURISTIC_RESULTS_DIRECTORY, 'box_plot.txt')
-                        #Path(file_path).write_text('\n'.join(box_plot_data))
-                        print('\n'.join(box_plot_data))
+                        graph = graph_generator(**graph_generator_kwargs)
+                        order = smallest_degree_dfs(graph)  # TODO adjust heuristic
 
-                #file_path = os.path.join(HEURISTIC_RESULTS_DIRECTORY, 'results.txt')
-                #Path(file_path).write_text('\n'.join(data))
-                print('\n'.join(data))
+                        heuristics = (
+                            (edge_length, 'eLen'),
+                            (ceil_floor, 'ceilFloor'),
+                            (data_structure, 'dataStructure'),
+                        )
+                        for heuristic, heuristic_name in heuristics:
+                            order_ = order.copy()
+                            mll = heuristic(graph, order)
+                            if not mll.is_order_and_edges_valid():
+                                raise Exception('Heuristic %s is wrong' % name)
+                            conflicts = mll.total_conflicts()
 
-                data = ['HEURISTIC;NAME;VO_ID;PA_ID;']
-                for name in best:
-                    name_1 = name.split(' ')[0]
-                    name_2 = name.split(' ')[1] if ' ' in name else ''
-                    data.append(';'.join(
-                        [str(best.index(name) + 1),
-                         heuristic_names[name_1] + ' & ' + heuristic_names[name_2] if name_2 else heuristic_names[name_1],
-                         heuristic_name_ids[name.split(' ')[0]],
-                         heuristic_name_ids[name.split(' ')[1] if ' ' in name else name.split(' ')[0]]]) + ';')
+                            v = len(graph.vertices)
+                            e = len(graph.edges)
+                            print(','.join(['random_6n', str(v), str(e), heuristic_name, str(conflicts), str(conflicts/e)]))  # TODO adjust name
 
-                #file_path = os.path.join(HEURISTIC_RESULTS_DIRECTORY, 'legend.txt')
-                #Path(file_path).write_text('\n'.join(data))
-                print('\n'.join(data))
 
             elif type == 'pages':
                 latex_table = '''
@@ -395,7 +376,7 @@ if __name__ == '__main__':
             if graph_class == 'planar':
                 graph_generator = generate_planar_graph
             elif graph_class == 'planar_bipartite':
-                graph_generator = generate_planer_bipartite_graph
+                graph_generator = generate_planar_bipartite_graph
                 graph_generator_kwargs['edge_density'] = 1
             elif graph_class == 'random':
                 graph_generator = generate_random_graph
@@ -425,6 +406,248 @@ if __name__ == '__main__':
                 print(heuristic.__name__)
                 print(result)
                 print(statistics.mean(result))
+
+        elif arg == 'h-density':
+            #min_density = 51  # percent, 36 for planar, 51 for bipartite
+            #max_density = 100  # percent
+            min_density = 0  # percent, 36 for planar, 51 for bipartite
+            max_density = 190  # percent
+            density_increase = 1  # percent
+            runs_per_density = 1000
+            graph_vertices = 100
+
+            vertex_order_heuristic = random_bfs
+            #vertex_order_heuristic = smallest_degree_dfs
+
+            # choose the graph class
+            graph_generator = generate_planar_graph
+            #graph_generator = generate_planar_bipartite_graph
+
+            results = {h.__name__: [] for h in page_assignment_heuristics}
+            current_density = min_density
+            while current_density <= max_density:
+                for value in results.values():
+                    value.append(0)
+                for run in range(runs_per_density):
+                    graph = graph_generator(graph_vertices, target_triangles=current_density)
+
+                    # try:
+                    #     graph = reduce_edges(graph, current_density)
+                    # except GraphNotConnectedException as e:
+                    #     print('Could not generate a graph for density: %s' % current_density)
+                    #     exit()
+                    for page_heuristic in page_assignment_heuristics:
+                        heuristic = full_combined_heuristic(vertex_order_heuristic, page_heuristic)
+                        layout = heuristic(graph)
+                        results[page_heuristic.__name__][-1] += layout.total_conflicts()
+                        #print(page_heuristic.__name__, current_density, layout.total_conflicts())
+
+                print('Densitiy: %s' % current_density)
+                for key, value in results.items():
+                    value[-1] = int(value[-1] / runs_per_density)
+                    print(key, value[-1])
+
+                current_density += density_increase
+
+            data_frame = pd.DataFrame(results)
+            data_frame.index = range(min_density, max_density + 1, density_increase)
+
+            #print(data_frame)
+            data_frame.to_csv('planar_triangles.csv')
+
+            #data_frame.plot()
+            #plt.show()
+
+        elif arg == 'plot':
+            data_frame = pd.read_csv('planar_bipartite_graph.csv', index_col=0)
+
+            for row in data_frame.iterrows():
+                edges = (2 * 100 - 4) * (row[0] / 100)
+                data_frame.ix[row[0], 0] = row[1]['ceil floor'] / edges
+                data_frame.ix[row[0], 1] = row[1]['data structure'] / edges
+                data_frame.ix[row[0], 2] = row[1]['edge length'] / edges
+
+            data_frame.to_csv('planar_bipartite_graph_2.csv')
+
+            ax = data_frame.plot(title='Planar bipartite')
+            ax.set_xlabel('Density')
+            ax.set_ylabel('Conflicts / Edge')
+            plt.show()
+
+        elif arg == 'plot2':
+            tests = [
+                ('planar', 'Delaunay triangulated graphs'),
+                ('planar_bipartite', 'Planar bipartite graphs'),
+                ('2-tree', '2-trees'),
+                ('3-tree', '3-trees'),
+                ('random_3n', 'Random graphs with 3n edges'),
+                ('random_6n', 'Random graphs with 6n edges'),
+                ('complete', 'Complete graphs'),
+            ]
+            for graph_class, title in tests:
+
+                import seaborn as sns
+                from pylab import rcParams
+                rcParams['figure.figsize'] = 5, 5
+
+                sns.set(style="darkgrid")
+
+                data_frame = pd.read_csv('data/%s.csv' % graph_class, index_col=0)
+
+                ax = sns.lineplot(x="vertices", y="conflicts_per_edge",
+                                  hue="heuristic", ci='sd', #style="event",
+                                  data=data_frame)
+                ax.set(xlabel='Vertices', ylabel='Conflicts per edge')
+                ax.set_title(title)
+
+                #ax.set(ylim=(0, 24))
+                ax.set(ylim=(0, 3))
+
+                legend = ax.legend(loc='upper left')
+                legend.texts[0].set_text("Heuristics")
+
+                plt.savefig('figures/%s.png' % graph_class)
+                plt.show()
+
+        elif arg == 'boxplot':
+            import seaborn as sns
+
+            sns.set(style="ticks", palette="pastel")
+
+            data_frame = pd.read_csv('all_data.csv')
+
+            sns.boxplot(x="Graph classes", y="Conflicts", hue="Heuristics", palette=["m", "g", "b"], data=data_frame)
+            sns.despine(offset=10, trim=True)
+
+            plt.show()
+
+        elif arg == 'best':
+            def chunks(l, n):
+                """Yield successive n-sized chunks from l."""
+                for i in range(0, len(l), n):
+                    yield l[i:i + n]
+
+            tests = [
+                ('planar', 'Delaunay triangulated graphs'),
+                ('planar_bipartite', 'Planar bipartite graphs'),
+                ('2-tree', '2-trees'),
+                ('3-tree', '3-trees'),
+                ('random_3n', 'Random graphs with 3n edges'),
+                ('random_6n', 'Random graphs with 6n edges'),
+                #('complete', 'Complete graphs'),
+            ]
+
+            for graph_class, title in tests:
+                results = {}
+                with open('data/%s.csv' % graph_class) as f:
+                    lines = f.readlines()[1:]
+                    for a, b, c in chunks(lines, 3):
+                        a = a.split(',')
+                        b = b.split(',')
+                        c = c.split(',')
+                        graph_size = a[1]
+                        if graph_size not in results:
+                            results[graph_size] = defaultdict(int)
+                        if float(a[-1]) < float(b[-1]) and float(a[-1]) < float(c[-1]):
+                            results[graph_size][a[3]] += 1
+                        elif float(b[-1]) < float(a[-1]) and float(b[-1]) < float(c[-1]):
+                            results[graph_size][b[3]] += 1
+                        elif float(c[-1]) < float(a[-1]) and float(c[-1]) < float(b[-1]):
+                            results[graph_size][c[3]] += 1
+
+                with open('conflicts_2/%s.csv' % graph_class, 'w+') as file:
+                    file.write('graph_class,vertices,eLen,ceilFloor,dataStructure\n')
+                    for i in range(10, 101, 5):
+                        i = str(i)
+                        line = '%s,%s' % (graph_class, i)
+                        total = results[i]['dataStructure'] + results[i]['ceilFloor'] + results[i]['eLen']
+                        for heuristic in ['eLen', 'ceilFloor', 'dataStructure']:
+                            best = results[i][heuristic]
+                            line += ',%s' % str(best/total)
+
+                        file.write(line)
+                        file.write('\n')
+
+                import seaborn as sns
+                from pylab import rcParams
+                rcParams['figure.figsize'] = 5, 5
+                sns.set(style="darkgrid")
+                #sns.set(style="whitegrid")
+
+                df = pd.read_csv('conflicts_2/%s.csv' % graph_class, index_col=0)
+
+                #g = sns.catplot(x="vertices", y="best_percent", hue="heuristic", data=data_frame,
+                #                 height=6, kind="bar", palette="muted")
+                # g.fig.suptitle(title)
+                # g.despine(left=True)
+                # g.set_ylabels("Best in percent")
+                # g.set_xlabels("Number of vertices")
+
+                # sns.set()
+                # df.set_index('vertices').T.plot(kind='bar', stacked=True)
+
+                r = [x for x in range(0, 19)]
+
+                # From raw value to percentage
+                totals = [1 for x in range(19)]
+                greenBars = [i / j * 100 for i,j in zip(df['dataStructure'], totals)]
+                orangeBars = [i / j * 100 for i,j in zip(df['ceilFloor'], totals)]
+                blueBars = [i / j * 100 for i,j in zip(df['eLen'], totals)]
+
+                # plot
+                barWidth = 1
+                #names = [str(x) for x in range(10, 105, 5)]
+                names = ['10', '', '20', '', '30', '', '40', '', '50', '', '60', '', '70', '', '80', '', '90', '', '100']
+                plt.bar(r, greenBars, color='#b5ffb9', edgecolor='white', width=barWidth, label="dataStructure")
+                plt.bar(r, orangeBars, bottom=greenBars, color='#f9bc86', edgecolor='white', width=barWidth, label="ceilFloor")
+                plt.bar(r, blueBars, bottom=[i+j for i,j in zip(greenBars, orangeBars)], color='#a3acff', edgecolor='white', width=barWidth, label="eLen")
+
+                # Custom x axis
+                plt.xticks(r, names)
+                plt.ylabel("Best in percent")
+                plt.xlabel("Vertices")
+                plt.gca().xaxis.grid(False)
+
+                # Add a legend
+                plt.legend(loc='upper right', bbox_to_anchor=(1, 1), ncol=1, framealpha=0.8)
+
+                plt.suptitle(title)
+
+                plt.savefig('conflict_figures_2/%s.png' % graph_class)
+                plt.show()
+
+        elif arg == 'all_data':
+            graph_classes = (
+                'planar',
+                'planar_bipartite',
+                '2_tree',
+                '3_tree',
+                'random_3n',
+                #'random_6n',
+            )
+            for graph in graph_classes:
+                lines = []
+                with open('box_plot_%s.txt' % graph) as file:
+                    for line in file:
+                        if 'HEURISTIC;CONFLICTS' in line:
+                            continue
+
+                        algo = line.split(';')[0]
+                        conflicts = line.split(';')[1]
+                        conflicts = conflicts.replace('\n', '')
+                        a = 'ERROR'
+                        if 'eLen' in algo:
+                            a = 'eLen'
+                        elif 'ceilFloor'in algo:
+                            a = 'ceilFloor'
+                        elif 'dataStructure'in algo:
+                            a = 'dataStructure'
+
+                        lines.append('%s,%s,%s\n' % (a, conflicts, graph))
+
+                with open('all_data.csv', 'a+') as file:
+                    for line in lines:
+                        file.write(line)
 
         elif arg == 'h-parameter':
             def parameter_optimization(alpha):
@@ -599,7 +822,7 @@ if __name__ == '__main__':
             stacks = 2
             queues = 1
 
-            graph, _ = generate_complete_graph(num_vertices)
+            graph = generate_complete_graph(num_vertices)
             num_edges = len(graph.edges)
             print(graph)
 
@@ -664,6 +887,15 @@ if __name__ == '__main__':
                 if not mll.is_valid():
                     raise Exception('MLL not valid')
                 show_linear_layouts([mll])
+
+        elif arg == 'observation_1':
+            observation_1()
+
+        elif arg == 'observation_2':
+            observation_2()
+
+        elif arg == 'observation_3':
+            observation_3()
 
         else:
             print('Unknown argument: ', arg)

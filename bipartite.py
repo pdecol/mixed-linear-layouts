@@ -1,7 +1,8 @@
 import sys
 from collections import defaultdict
 
-from models import Queue, Graph
+from models import Graph
+from utils import Queue
 
 
 class LayeredGraph(Graph):

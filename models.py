@@ -3,7 +3,7 @@ import sys
 from collections import defaultdict
 from random import shuffle
 
-from utils import check_layout
+from utils import check_layout, Stack, Queue
 
 
 class Graph:
@@ -39,6 +39,17 @@ class Graph:
             self.edges.append((v1, v2))
             self.adjacency[v1].append(v2)
             self.adjacency[v2].append(v1)
+
+    def remove_edge(self, vertex_1, vertex_2):
+        v1 = self._vertex_mapping[vertex_1]
+        v2 = self._vertex_mapping[vertex_2]
+        if v1 > v2:
+            # Edges are always ordered like (lower_vertex_id, higher_vertex_id)
+            v1, v2 = v2, v1
+        if (v1, v2) in self.edges:
+            self.edges.remove((v1, v2))
+            self.adjacency[v1].remove(v2)
+            self.adjacency[v2].remove(v1)
 
     def add_vertex(self, vertex):
         if vertex not in self._vertex_mapping:
@@ -84,6 +95,10 @@ class Graph:
     def get_edges_labeled(self, edges):
         inverse_map = {v: k for k, v in self._vertex_mapping.items()}
         return [(inverse_map[x], inverse_map[y]) for x, y in edges]
+
+    def get_adjacency_matrix(self):
+        vertices = sorted(self.vertices)
+        return [[1 if v2 in self.adjacency[v1] else 0 for v2 in vertices] for v1 in vertices]
 
 
 class LinearLayout:
@@ -448,36 +463,3 @@ class StackLinearLayout(LinearLayout):
     @stack2.setter
     def stack2(self, stack):
         self.stacks[1] = stack
-
-
-class AbstractDataStructure:
-    def __init__(self):
-        self.items = []
-
-    def is_empty(self):
-        return self.items == []
-
-    def size(self):
-        return len(self.items)
-
-
-class Stack(AbstractDataStructure):
-    def push(self, item):
-        self.items.append(item)
-
-    def pop(self):
-        return self.items.pop()
-
-    def peek(self):
-        return self.items[len(self.items) - 1]
-
-
-class Queue(AbstractDataStructure):
-    def enqueue(self, item):
-        self.items.append(item)
-
-    def dequeue(self):
-        return self.items.pop(0)
-
-    def peek(self):
-        return self.items[0]
